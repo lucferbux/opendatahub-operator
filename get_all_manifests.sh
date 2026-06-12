@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-set -e
+set -euo pipefail
 
 GITHUB_URL="https://github.com"
 DST_MANIFESTS_DIR="./opt/manifests"
@@ -15,7 +15,6 @@ DST_CHARTS_DIR="./opt/charts"
 
 # ODH Component Manifests
 declare -A ODH_COMPONENT_MANIFESTS=(
-    ["dashboard"]="opendatahub-io:odh-dashboard:main@10ed798b54d52caddf088d755c59cbdb6f3d9b9f:manifests"
     ["workbenches/kf-notebook-controller"]="opendatahub-io:kubeflow:main@5d0d761264ce34fa7dfaf5e1fff8fec78cfab892:components/notebook-controller/config"
     ["workbenches/odh-notebook-controller"]="opendatahub-io:kubeflow:main@5d0d761264ce34fa7dfaf5e1fff8fec78cfab892:components/odh-notebook-controller/config"
     ["workbenches/notebooks"]="opendatahub-io:notebooks:main@d86306036a6359b5cd7ee9e33041951ef80f451c:manifests"
@@ -38,7 +37,6 @@ declare -A ODH_COMPONENT_MANIFESTS=(
 
 # RHOAI Component Manifests
 declare -A RHOAI_COMPONENT_MANIFESTS=(
-    ["dashboard"]="red-hat-data-services:odh-dashboard:rhoai-3.5@55414bb82ae3301fa5fb700d1cf0a6b306c43448:manifests"
     ["workbenches/kf-notebook-controller"]="red-hat-data-services:kubeflow:rhoai-3.5@c3851eb56711c35a9f260f2e542920bb6a2b83ad:components/notebook-controller/config"
     ["workbenches/odh-notebook-controller"]="red-hat-data-services:kubeflow:rhoai-3.5@c3851eb56711c35a9f260f2e542920bb6a2b83ad:components/odh-notebook-controller/config"
     ["workbenches/notebooks"]="red-hat-data-services:notebooks:rhoai-3.5@4bc2e14a0b10ef9977605793c2026956a5e22be3:manifests"
@@ -75,6 +73,9 @@ declare -A ODH_CCM_CHARTS=(
 
 # ODH Component Charts
 declare -A ODH_COMPONENT_CHARTS=(
+    # Pin to odh-dashboard#8241 merge on main (webhook cert-manager templates, agentOps).
+    # RHOAIENG-70528 RBAC ClusterRole expansion is pending — bump again when that lands.
+    ["dashboard-operator"]="opendatahub-io:odh-dashboard:main@98c129fdd18ffe254b15cf8a3bb98ccfa00e09aa:dashboard-operator/charts/dashboard"
 )
 
 # RHOAI CloudManager Charts
@@ -87,6 +88,7 @@ declare -A RHOAI_CCM_CHARTS=(
 
 # RHOAI Component Charts
 declare -A RHOAI_COMPONENT_CHARTS=(
+    ["dashboard-operator"]="red-hat-data-services:odh-dashboard:rhoai-3.5-ea.2@b2fe40cb02c3580f870729b1f36cde9a44146586:dashboard-operator/charts/dashboard"
 )
 
 # merge_charts merges CCM and component charts into COMPONENT_CHARTS, failing on duplicate keys.
@@ -125,9 +127,6 @@ else
 fi
 
 # PLATFORM_MANIFESTS is a list of manifests that are contained in the operator repository. Please also add them to the
-# Dockerfile COPY instructions. Declaring them here causes this script to create a symlink in the manifests folder, so
-# they can be easily modified during development, but during a container build, they must be copied into the proper
-# location instead, as this script DOES NOT manage platform manifest files for a container build.
 declare -A PLATFORM_MANIFESTS=(
     ["osd-configs"]="config/osd-configs"
     ["hardwareprofiles"]="config/hardwareprofiles"
@@ -145,6 +144,11 @@ if [ "$#" -ge 1 ]; then
             if [[ -n "${COMPONENT_MANIFESTS[$key]}" ]]; then
                 if [[ ! $value =~ $pattern ]]; then
                     echo "ERROR: The value '$value' does not match the expected format 'repo-org:repo-name:ref-name:source-folder'."
+                    continue
+                fi
+                IFS=':' read -r _ _ _ override_source_path <<< "$value"
+                if [[ "$override_source_path" = /* || "$override_source_path" == *".."* ]]; then
+                    echo "ERROR: Invalid source-folder '$override_source_path' (absolute paths and '..' are not allowed)."
                     continue
                 fi
                 COMPONENT_MANIFESTS["$key"]=$value
@@ -188,8 +192,8 @@ function git_fetch_ref()
     local ref=$2
     local dir=$3
 
-    mkdir -p $dir
-    pushd $dir &>/dev/null
+    mkdir -p "$dir"
+    pushd "$dir" &>/dev/null
     git init -q
 
     # Check if ref is in tracking format: branch@sha
@@ -197,23 +201,23 @@ function git_fetch_ref()
         local commit_sha="${BASH_REMATCH[2]}"
 
         # For tracking format, fetch the specific commit SHA
-        git remote add origin $repo
-        if ! git fetch --depth 1 -q origin $commit_sha; then
+        git remote add origin "$repo"
+        if ! git fetch --depth 1 -q origin "$commit_sha"; then
             echo "ERROR: Failed to fetch from repository $repo"
             popd &>/dev/null
             return 1
         fi
-        if ! git reset -q --hard $commit_sha 2>/dev/null; then
+        if ! git reset -q --hard "$commit_sha" 2>/dev/null; then
             echo "ERROR: Commit SHA $commit_sha not found in repository $repo"
             popd &>/dev/null
             return 1
         fi
     else
-        # Original logic for branches, tags, and plain commit SHAs
-        # Try to fetch as tag first, then as branch
-        if try_fetch_ref "$repo" "tags" "$ref" || try_fetch_ref "$repo" "heads" "$ref"; then
-            # Successfully fetched tag or branch
-            :  # no-op, we're done
+        # Try plain commit SHA first, then tag, then branch
+        if [[ $ref =~ ^[a-f0-9]{7,40}$ ]] && git fetch -q --depth 1 "$repo" "$ref" && git reset -q --hard FETCH_HEAD; then
+            :
+        elif try_fetch_ref "$repo" "tags" "$ref" || try_fetch_ref "$repo" "heads" "$ref"; then
+            :
         else
             echo "ERROR: '$ref' is not a valid branch, tag, or commit SHA in repository $repo"
             echo "You can check available refs with:"
@@ -243,20 +247,20 @@ download_repo_content() {
     repo_url="${GITHUB_URL}/${repo_org}/${repo_name}"
     repo_dir="${TMP_DIR}/${dst_dir}/${key}"
 
-    if [[ "${USE_LOCAL}" == "true" ]] && [[ -e ../${repo_name} ]]; then
+    if [[ "${USE_LOCAL:-}" == "true" ]] && [[ -e "../${repo_name}" ]]; then
         echo "copying from adjacent checkout ..."
         mkdir -p "${dst_dir}/${target_path}"
-        cp -rf "../${repo_name}/${source_path}"/* "${dst_dir}/${target_path}"
+        cp -a -- "../${repo_name}/${source_path}/." "${dst_dir}/${target_path}/"
         return
     fi
 
-    if ! git_fetch_ref ${repo_url} ${repo_ref} ${repo_dir}; then
+    if ! git_fetch_ref "${repo_url}" "${repo_ref}" "${repo_dir}"; then
         echo "ERROR: Failed to fetch ref '${repo_ref}' from '${repo_url}' for component '${key}'"
         return 1
     fi
 
     mkdir -p "${dst_dir}/${target_path}"
-    cp -rf "${repo_dir}/${source_path}"/* "${dst_dir}/${target_path}"
+    cp -a -- "${repo_dir}/${source_path}/." "${dst_dir}/${target_path}/"
 }
 
 download_manifest() {
@@ -267,7 +271,8 @@ download_chart() {
     download_repo_content "$1" "$2" "${DST_CHARTS_DIR}"
 }
 
-# Track background job PIDs +declare -a pids=()
+# Track background job PIDs
+declare -a pids=()
 # Use parallel processing
 for key in "${!COMPONENT_MANIFESTS[@]}"; do
     download_manifest "$key" "${COMPONENT_MANIFESTS[$key]}" &
@@ -280,7 +285,7 @@ for pid in "${pids[@]}"; do
         failed=1
     fi
 done
-if [ $failed -eq 1 ]; then
+if [ "$failed" -eq 1 ]; then
     echo "One or more downloads failed"
     exit 1
 fi
@@ -297,7 +302,7 @@ if [ ${#COMPONENT_CHARTS[@]} -gt 0 ]; then
             failed=1
         fi
     done
-    if [ $failed -eq 1 ]; then
+    if [ "$failed" -eq 1 ]; then
         echo "One or more chart downloads failed"
         exit 1
     fi
@@ -307,8 +312,8 @@ for key in "${!PLATFORM_MANIFESTS[@]}"; do
     source_path="${PLATFORM_MANIFESTS[$key]}"
     target_path="${key}"
 
-    if [[ -d ${source_path} && ! -L ${DST_MANIFESTS_DIR}/${target_path} ]]; then
+    if [[ -d "${source_path}" && ! -L "${DST_MANIFESTS_DIR}/${target_path}" ]]; then
         echo -e "\033[32mSymlinking local manifest \033[33m${key}\033[32m:\033[0m ${source_path}"
-        ln -s $(pwd)/${source_path} ${DST_MANIFESTS_DIR}/${target_path}
+        ln -s "$(pwd)/${source_path}" "${DST_MANIFESTS_DIR}/${target_path}"
     fi
 done
