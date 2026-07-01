@@ -181,6 +181,14 @@ func TestGetOperatorManifests_WithCertManager(t *testing.T) {
 	certManager, ok := webhook["certManager"].(map[string]any)
 	g.Expect(ok).Should(BeTrue(), "webhook.certManager values missing")
 	g.Expect(certManager["enabled"]).Should(BeTrue())
+
+	relatedImages, ok := vals["relatedImages"].(map[string]any)
+	g.Expect(ok).Should(BeTrue(), "relatedImages values missing")
+	g.Expect(relatedImages).Should(HaveKey("RELATED_IMAGE_ODH_DASHBOARD_IMAGE"))
+	g.Expect(relatedImages).Should(HaveKey("RELATED_IMAGE_ODH_KUBE_RBAC_PROXY_IMAGE"))
+	for k, v := range relatedImages {
+		g.Expect(v).Should(Equal(""), "relatedImages[%s] should be empty string, got %v", k, v)
+	}
 }
 
 func TestGetOperatorManifests_WithoutCertManager(t *testing.T) {

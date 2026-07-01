@@ -47,6 +47,9 @@ func NewHandler() *handler {
 					"webhook": map[string]any{
 						"port": 9443,
 					},
+					// Override chart :main tag defaults with empty strings so the
+					// dashboard-operator falls back to digest-pinned params.env defaults.
+					"relatedImages": emptyRelatedImageValues(),
 				},
 				GVK:             gvk.Dashboard, // components.platform.opendatahub.io/v1alpha1/Dashboard
 				ControllerImage: "RELATED_IMAGE_ODH_DASHBOARD_OPERATOR_IMAGE",

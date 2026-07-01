@@ -20,3 +20,16 @@ func relatedImages() []string {
 		"RELATED_IMAGE_ODH_AUTORAG_IMAGE",
 	}
 }
+
+// emptyRelatedImageValues returns a Helm values map that overrides the chart's
+// default relatedImages (which carry :main tags) with empty strings. Empty
+// env vars are skipped by the dashboard-operator's resolveImageParams, so the
+// digest-pinned defaults in params.env are preserved (odh-dashboard#8330).
+func emptyRelatedImageValues() map[string]any {
+	imgs := relatedImages()
+	m := make(map[string]any, len(imgs))
+	for _, name := range imgs {
+		m[name] = ""
+	}
+	return m
+}
