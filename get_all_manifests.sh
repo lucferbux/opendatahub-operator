@@ -73,8 +73,7 @@ declare -A ODH_CCM_CHARTS=(
 
 # ODH Component Charts
 declare -A ODH_COMPONENT_CHARTS=(
-    # Includes odh-dashboard#8324 (webhook cert-manager without Capabilities guard).
-    ["dashboard-operator"]="opendatahub-io:odh-dashboard:main@2c2e3a4d0956737913a3351633f9343782fd28f6:dashboard-operator/charts/dashboard"
+    ["dashboard-operator"]="opendatahub-io:odh-dashboard:main@b132a89b0cb5aa832d0b9c1f2aed25c14a42e9fc:dashboard-operator/charts/dashboard"
 )
 
 # RHOAI CloudManager Charts
@@ -87,7 +86,7 @@ declare -A RHOAI_CCM_CHARTS=(
 
 # RHOAI Component Charts
 declare -A RHOAI_COMPONENT_CHARTS=(
-    ["dashboard-operator"]="red-hat-data-services:odh-dashboard:rhoai-3.5-ea.2@31c6893c8d6c0adff8187fdb7cee0ba660e5ecc8:dashboard-operator/charts/dashboard"
+    ["dashboard-operator"]="red-hat-data-services:odh-dashboard:rhoai-3.5@41aa9a98099acd300607e5d08f2c113fc85d523e:dashboard-operator/charts/dashboard"
 )
 
 # merge_charts merges CCM and component charts into COMPONENT_CHARTS, failing on duplicate keys.
