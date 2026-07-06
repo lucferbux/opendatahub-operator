@@ -5,12 +5,11 @@ import (
 	"fmt"
 	"strings"
 
+	operatorv1 "github.com/openshift/api/operator/v1"
 	k8serr "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
-
-	operatorv1 "github.com/openshift/api/operator/v1"
 
 	"github.com/opendatahub-io/opendatahub-operator/v2/api/common"
 	configv1alpha1 "github.com/opendatahub-io/opendatahub-operator/v2/api/config/v1alpha1"
