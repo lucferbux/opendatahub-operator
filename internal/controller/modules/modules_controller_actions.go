@@ -10,6 +10,8 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
+	operatorv1 "github.com/openshift/api/operator/v1"
+
 	"github.com/opendatahub-io/opendatahub-operator/v2/api/common"
 	configv1alpha1 "github.com/opendatahub-io/opendatahub-operator/v2/api/config/v1alpha1"
 	dscv2 "github.com/opendatahub-io/opendatahub-operator/v2/api/datasciencecluster/v2"
@@ -18,6 +20,7 @@ import (
 	"github.com/opendatahub-io/opendatahub-operator/v2/internal/controller/status"
 	"github.com/opendatahub-io/opendatahub-operator/v2/pkg/cluster"
 	odherrors "github.com/opendatahub-io/opendatahub-operator/v2/pkg/controller/actions/errors"
+	"github.com/opendatahub-io/opendatahub-operator/v2/pkg/controller/conditions"
 	"github.com/opendatahub-io/opendatahub-operator/v2/pkg/controller/dag"
 	"github.com/opendatahub-io/opendatahub-operator/v2/pkg/controller/provision"
 	odhtype "github.com/opendatahub-io/opendatahub-operator/v2/pkg/controller/types"
@@ -432,8 +435,22 @@ func ComputeModulesStatus(ctx context.Context, rr *odhtype.ReconciliationRequest
 
 	err = reg.ForEach(func(handler ModuleHandler) error {
 		name := handler.GetName()
+		conditionType := handler.GetGVK().Kind + status.ReadySuffix
 
 		if !handler.IsEnabled(platformCtx) {
+			ms := operatorv1.Removed
+			rr.Conditions.MarkFalse(conditionType,
+				conditions.WithReason(string(ms)),
+				conditions.WithMessage("Component ManagementState is set to %s", string(ms)),
+				conditions.WithSeverity(common.ConditionSeverityInfo),
+			)
+
+			if updater, ok := handler.(DSCStatusUpdater); ok {
+				if err := updater.UpdateDSCStatus(ctx, rr, nil); err != nil {
+					log.Error(err, "UpdateDSCStatus failed for disabled module", "module", name)
+				}
+			}
+
 			return nil
 		}
 
@@ -443,6 +460,14 @@ func ComputeModulesStatus(ctx context.Context, rr *odhtype.ReconciliationRequest
 		if err != nil {
 			log.V(1).Info("failed to get module status", "module", name, "error", err)
 			notReadyModules = append(notReadyModules, name)
+			rr.Conditions.MarkFalse(conditionType)
+
+			if updater, ok := handler.(DSCStatusUpdater); ok {
+				if err := updater.UpdateDSCStatus(ctx, rr, nil); err != nil {
+					log.Error(err, "UpdateDSCStatus failed", "module", name)
+				}
+			}
+
 			return nil
 		}
 
@@ -453,6 +478,14 @@ func ComputeModulesStatus(ctx context.Context, rr *odhtype.ReconciliationRequest
 				"generation", moduleStatus.Generation,
 			)
 			notReadyModules = append(notReadyModules, name+" (stale)")
+			rr.Conditions.MarkFalse(conditionType)
+
+			if updater, ok := handler.(DSCStatusUpdater); ok {
+				if err := updater.UpdateDSCStatus(ctx, rr, moduleStatus); err != nil {
+					log.Error(err, "UpdateDSCStatus failed", "module", name)
+				}
+			}
+
 			return nil
 		}
 
@@ -472,6 +505,24 @@ func ComputeModulesStatus(ctx context.Context, rr *odhtype.ReconciliationRequest
 			notReadyModules = append(notReadyModules, name)
 		} else if degraded {
 			degradedModules = append(degradedModules, name)
+		}
+
+		crState, _ := handler.GetModuleCRState(ctx, rr.Client)
+		if crState == CRStateDeleting {
+			rr.Conditions.MarkFalse(conditionType,
+				conditions.WithReason(status.DeletingReason),
+				conditions.WithMessage(status.DeletingMessage),
+			)
+		} else if rc := findMetav1Condition(moduleStatus.Conditions, status.ConditionTypeReady); rc != nil {
+			rr.Conditions.MarkFrom(conditionType, metav1ConditionToCommon(*rc))
+		} else {
+			rr.Conditions.MarkFalse(conditionType)
+		}
+
+		if updater, ok := handler.(DSCStatusUpdater); ok {
+			if err := updater.UpdateDSCStatus(ctx, rr, moduleStatus); err != nil {
+				log.Error(err, "UpdateDSCStatus failed", "module", name)
+			}
 		}
 
 		return nil
@@ -513,6 +564,24 @@ func ComputeModulesStatus(ctx context.Context, rr *odhtype.ReconciliationRequest
 	}
 
 	return nil
+}
+
+func findMetav1Condition(conds []metav1.Condition, condType string) *metav1.Condition {
+	for i := range conds {
+		if conds[i].Type == condType {
+			return &conds[i]
+		}
+	}
+
+	return nil
+}
+
+func metav1ConditionToCommon(c metav1.Condition) common.Condition {
+	return common.Condition{
+		Status:  c.Status,
+		Reason:  c.Reason,
+		Message: c.Message,
+	}
 }
 
 // updateModuleStatus writes ModulesReady only when no in-tree components

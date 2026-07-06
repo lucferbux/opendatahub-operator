@@ -132,6 +132,13 @@ type PrerequisiteValidator interface {
 	ValidatePrerequisites(platform *PlatformContext) error
 }
 
+// DSCStatusUpdater is an optional interface a ModuleHandler can implement to
+// project typed status fields into dsc.Status.Components.<Module>. Called from
+// ComputeModulesStatus after the generic <Kind>Ready condition is set.
+type DSCStatusUpdater interface {
+	UpdateDSCStatus(ctx context.Context, rr *types.ReconciliationRequest, moduleStatus *ModuleStatus) error
+}
+
 // ModuleStatus holds the parsed status from a module CR. It includes the
 // standard conditions, generation metadata for staleness detection, and
 // the release version for the platform version handshake.

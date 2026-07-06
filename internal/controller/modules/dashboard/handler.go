@@ -12,8 +12,11 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	componentApi "github.com/opendatahub-io/opendatahub-operator/v2/api/components/v1alpha1"
+	dscv2 "github.com/opendatahub-io/opendatahub-operator/v2/api/datasciencecluster/v2"
+	"github.com/opendatahub-io/opendatahub-operator/v2/internal/controller/components"
 	"github.com/opendatahub-io/opendatahub-operator/v2/internal/controller/modules"
 	"github.com/opendatahub-io/opendatahub-operator/v2/pkg/cluster/gvk"
+	odhtype "github.com/opendatahub-io/opendatahub-operator/v2/pkg/controller/types"
 )
 
 const (
@@ -174,4 +177,23 @@ func (h *handler) BuildModuleCR(
 	u.SetName(h.Config.CRName)
 
 	return u, nil
+}
+
+// UpdateDSCStatus projects the dashboard module's management state and typed
+// status into dsc.Status.Components.Dashboard.
+func (h *handler) UpdateDSCStatus(_ context.Context, rr *odhtype.ReconciliationRequest, moduleStatus *modules.ModuleStatus) error {
+	dsc, ok := rr.Instance.(*dscv2.DataScienceCluster)
+	if !ok {
+		return nil
+	}
+
+	ms := components.NormalizeManagementState(dsc.Spec.Components.Dashboard.ManagementState)
+	dsc.Status.Components.Dashboard.ManagementState = ms
+	dsc.Status.Components.Dashboard.DashboardCommonStatus = nil
+
+	if moduleStatus == nil {
+		return nil
+	}
+
+	return nil
 }

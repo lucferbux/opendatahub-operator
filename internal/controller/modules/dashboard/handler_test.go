@@ -6,12 +6,15 @@ import (
 	"testing"
 
 	operatorv1 "github.com/openshift/api/operator/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/opendatahub-io/opendatahub-operator/v2/api/common"
 	componentApi "github.com/opendatahub-io/opendatahub-operator/v2/api/components/v1alpha1"
 	dscv2 "github.com/opendatahub-io/opendatahub-operator/v2/api/datasciencecluster/v2"
 	"github.com/opendatahub-io/opendatahub-operator/v2/internal/controller/modules"
 	"github.com/opendatahub-io/opendatahub-operator/v2/internal/controller/modules/dashboard"
+	"github.com/opendatahub-io/opendatahub-operator/v2/pkg/controller/conditions"
+	odhtype "github.com/opendatahub-io/opendatahub-operator/v2/pkg/controller/types"
 
 	. "github.com/onsi/gomega"
 )
@@ -245,4 +248,69 @@ func TestGetRelatedImages(t *testing.T) {
 		"RELATED_IMAGE_ODH_MOD_ARCH_AGENT_OPS_IMAGE",
 		"RELATED_IMAGE_ODH_AUTORAG_IMAGE",
 	))
+}
+
+func newReconciliationRequest(mgmtState operatorv1.ManagementState) (*odhtype.ReconciliationRequest, *dscv2.DataScienceCluster) {
+	dsc := &dscv2.DataScienceCluster{
+		Spec: dscv2.DataScienceClusterSpec{
+			Components: dscv2.Components{
+				Dashboard: componentApi.DSCDashboard{
+					ManagementSpec: common.ManagementSpec{
+						ManagementState: mgmtState,
+					},
+				},
+			},
+		},
+	}
+
+	return &odhtype.ReconciliationRequest{
+		Instance:   dsc,
+		Conditions: conditions.NewManager(dsc, "Ready"),
+	}, dsc
+}
+
+func TestUpdateDSCStatus_Managed(t *testing.T) {
+	g := NewWithT(t)
+	h := dashboard.NewHandler()
+	rr, dsc := newReconciliationRequest(operatorv1.Managed)
+
+	err := h.UpdateDSCStatus(context.Background(), rr, &modules.ModuleStatus{
+		Conditions: []metav1.Condition{
+			{Type: "Ready", Status: metav1.ConditionTrue, Reason: "Ready"},
+		},
+	})
+
+	g.Expect(err).ShouldNot(HaveOccurred())
+	g.Expect(dsc.Status.Components.Dashboard.ManagementState).Should(Equal(operatorv1.Managed))
+	g.Expect(dsc.Status.Components.Dashboard.DashboardCommonStatus).Should(BeNil())
+}
+
+func TestUpdateDSCStatus_Removed(t *testing.T) {
+	g := NewWithT(t)
+	h := dashboard.NewHandler()
+	rr, dsc := newReconciliationRequest(operatorv1.Removed)
+
+	err := h.UpdateDSCStatus(context.Background(), rr, nil)
+
+	g.Expect(err).ShouldNot(HaveOccurred())
+	g.Expect(dsc.Status.Components.Dashboard.ManagementState).Should(Equal(operatorv1.Removed))
+	g.Expect(dsc.Status.Components.Dashboard.DashboardCommonStatus).Should(BeNil())
+}
+
+func TestUpdateDSCStatus_EmptyManagementState(t *testing.T) {
+	g := NewWithT(t)
+	h := dashboard.NewHandler()
+	rr, dsc := newReconciliationRequest("")
+
+	err := h.UpdateDSCStatus(context.Background(), rr, nil)
+
+	g.Expect(err).ShouldNot(HaveOccurred())
+	g.Expect(dsc.Status.Components.Dashboard.ManagementState).Should(Equal(operatorv1.Removed))
+}
+
+func TestUpdateDSCStatus_ImplementsInterface(t *testing.T) {
+	g := NewWithT(t)
+	var h modules.ModuleHandler = dashboard.NewHandler()
+	_, ok := h.(modules.DSCStatusUpdater)
+	g.Expect(ok).Should(BeTrue(), "dashboard handler should implement DSCStatusUpdater")
 }
